@@ -1,0 +1,19 @@
+DEPS := $(OBJS:.o=.c.d)
+
+-include $(DEPS)
+
+$(DIR_OUT)/%.c.o: $(DIR_SRC)/%.c $(DIR_OUT)/%.c.d
+	@echo "Building `basename $@`"
+	mkdir -p `dirname $@`
+	$(CC) -c $(CFLAGS) -o $@ $<
+
+$(DIR_OUT)/%.S.o: $(DIR_SRC)/%.S
+	@echo "Building `basename $@`"
+	mkdir -p `dirname $@`
+	$(AS) -c $(CFLAGS) -o $@  $< 
+
+$(DIR_OUT)/%.c.d: $(DIR_SRC)/%.c
+	@echo "Building dependency `basename $@`"
+	mkdir -p `dirname $@`
+	$(CC) $(CFLAGS) -MG -MM -MP -MF $@  $< 
+	
