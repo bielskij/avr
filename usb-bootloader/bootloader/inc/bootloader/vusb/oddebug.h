@@ -34,7 +34,7 @@ the output and a memory block to dump in hex ('data' and 'len').
 #   define  uchar   unsigned char
 #endif
 
-#if DEBUG_LEVEL > 0 && !(defined TXEN || defined TXEN0) /* no UART in device */
+#if defined(DEBUG_LEVEL) && DEBUG_LEVEL > 0 && !(defined TXEN || defined TXEN0) /* no UART in device */
 #   warning "Debugging disabled because device has no UART"
 #   undef   DEBUG_LEVEL
 #endif

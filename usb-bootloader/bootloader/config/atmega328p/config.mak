@@ -18,8 +18,8 @@ CFLAGS += -mmcu=$(MCU) -DF_CPU=$(F_CPU) -DBOOTLOADER_SECTION_START_ADDRESS=$(BOO
 #                             statements
 
 CFLAGS += -Os -mtiny-stack -nostartfiles -fno-split-wide-types
-CFLAGS += -fshort-enums -fpack-struct -mrelax
-CFLAGS += -g -W -Wall -Wstrict-prototypes -Wundef -Warray-bounds -Wformat -Wmissing-braces -Wreturn-type -Wextra
+CFLAGS += -fshort-enums -fpack-struct -mrelax 
+CFLAGS += -g -Wall -Wundef -Warray-bounds -Wformat -Wmissing-braces -Wreturn-type
 
 CFLAGS += -I$(DIR_CONFIG)/$(MCU)/
 

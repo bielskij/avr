@@ -7,10 +7,9 @@
 #include <avr/pgmspace.h>
 #include "usbdrv.h"
 
-#include "bootloader/common/crc8.h"
-
-#include "bootloader/common/utils.h"
 #include "bootloader/common/types.h"
+#include "bootloader/common/crc8.h"
+#include "bootloader/common/utils.h"
 #include "bootloader/common/protocol.h"
 #include "bootloader/common/debug.h"
 
@@ -22,7 +21,7 @@
 
 #define BOOTLOADER_SIZE_IN_PAGES (((_U16) FLASHEND + 1 - BOOTLOADER_SECTION_START_ADDRESS) / SPM_PAGESIZE)
 
-#define BOOTLOADER_APPLICATION_PAGES_COUNT (((_U16) (FLASHEND + 1) / SPM_PAGESIZE) - BOOTLOADER_SIZE_IN_PAGES)
+#define BOOTLOADER_APPLICATION_PAGES_COUNT ((((_U16) (FLASHEND + 1) / SPM_PAGESIZE) - BOOTLOADER_SIZE_IN_PAGES))
 
 #define BOOTLOADER_BYTE_APP_CRC8     (FLASHEND - BOOTLOADER_SIZE_IN_PAGES * SPM_PAGESIZE)
 #define BOOTLOADER_BYTE_APP_CRC8_INV (FLASHEND - BOOTLOADER_SIZE_IN_PAGES * SPM_PAGESIZE - 1)
@@ -34,7 +33,8 @@
 typedef enum _BootloaderState {
 	BOOTLOADER_STATE_IDLE,
 	BOOTLOADER_STATE_PAGE_READ,
-	BOOTLOADER_STATE_PAGE_WRITE
+	BOOTLOADER_STATE_PAGE_WRITE,
+	BOOTLOADER_STATE_RESET,
 } BootloaderState;
 
 
@@ -43,8 +43,6 @@ static _U8 responseBuffer[8] = { 0 };
 static BootloaderState bootloaderState = BOOTLOADER_STATE_IDLE;
 static _U16            currentAddress  = 0;
 static _U16            dataSize        = 0;
-static _BOOL           reset           = FALSE;
-
 
 void __reset(void) {
 	__asm__ __volatile__ ("rjmp __init2 \n\t"::);
@@ -85,7 +83,7 @@ static void __init3(void) {
 static void __init9(void) __attribute__ ((section( ".init9" ), naked, used));
 static void __init9(void) {
 	// Jump to main
-	asm (
+	__asm__ __volatile__ (
 		"rjmp main" "\n\t"
 		::
 	);
@@ -94,29 +92,29 @@ static void __init9(void) {
 
 static _U8 _e2promRead(_U16 address) {
 	// Wait for completion of previous write
-	while (EECR & _BV(EEPE));
+	while (CHECK_BIT_AT(EECR, EEPE));
 
 	// Set up address register
 	EEAR = address;
 
 	// Start E2PROM read
-	EECR |= _BV(EERE);
+	SET_BIT_AT(EECR, EERE);
 
 	return EEDR;
 }
 
 
 static void _e2promWrite(_U16 address, _U8 value) {
-	while (EECR & (1 << EEPE));
+	while (CHECK_BIT_AT(EECR, EEPE));
 
 	EEAR = address;
 	EEDR = value;
 
 	// Write logical one to EEMPE
-	EECR |= _BV(EEMPE);
+	SET_BIT_AT(EECR, EEMPE);
 
 	// Start eeprom write by setting EEPE
-	EECR |= _BV(EEPE);
+	SET_BIT_AT(EECR, EEPE);
 }
 
 
@@ -125,6 +123,7 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 
 	{
 		usbRequest_t *request = (void *) data;
+		_U16 wIndex = request->wIndex.word;
 
 		DBG(("SETUP"));
 
@@ -141,7 +140,7 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 
 							bootloaderState = BOOTLOADER_STATE_PAGE_WRITE;
 
-							currentAddress  = request->wIndex.word * SPM_PAGESIZE;
+							currentAddress  = wIndex * SPM_PAGESIZE;
 							dataSize        = SPM_PAGESIZE;
 
 							// Multiple write
@@ -188,7 +187,7 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 
 							bootloaderState = BOOTLOADER_STATE_PAGE_READ;
 
-							currentAddress  = request->wIndex.word * SPM_PAGESIZE;
+							currentAddress  = wIndex * SPM_PAGESIZE;
 							dataSize        = SPM_PAGESIZE;
 
 							// Multiple read
@@ -200,14 +199,14 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 						{
 							DBG(("EPAG"));
 
-							if (request->wIndex.word >= BOOTLOADER_APPLICATION_PAGES_COUNT) {
+							if (wIndex >= BOOTLOADER_APPLICATION_PAGES_COUNT) {
 								responseBuffer[ret++] = BOOTLOADER_COMMON_COMMAND_STATUS_ERROR;
 
 								break;
 							}
 
 							boot_spm_busy_wait();
-							boot_page_erase(request->wIndex.word * SPM_PAGESIZE);
+							boot_page_erase(wIndex * SPM_PAGESIZE);
 
 							responseBuffer[ret++] = BOOTLOADER_COMMON_COMMAND_STATUS_OK;
 						}
@@ -218,7 +217,7 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 							DBG(("EREA"));
 
 							responseBuffer[ret++] = BOOTLOADER_COMMON_COMMAND_STATUS_OK;
-							responseBuffer[ret++] = _e2promRead(request->wIndex.word);
+							responseBuffer[ret++] = _e2promRead(wIndex);
 						}
 						break;
 
@@ -226,7 +225,7 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 						{
 							DBG(("EWRA"));
 
-							_e2promWrite(request->wIndex.word, request->wValue.word);
+							_e2promWrite(wIndex, request->wValue.word);
 
 							responseBuffer[ret++] = BOOTLOADER_COMMON_COMMAND_STATUS_OK;
 						}
@@ -236,7 +235,7 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 						{
 							responseBuffer[ret++] = BOOTLOADER_COMMON_COMMAND_STATUS_OK;
 
-							reset = TRUE;
+							bootloaderState = BOOTLOADER_STATE_RESET;
 						}
 						break;
 
@@ -250,7 +249,7 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 		}
 	}
 
-	usbMsgPtr = responseBuffer;
+	usbMsgPtr = (usbMsgPtr_t) responseBuffer;
 
     return ret;
 }
@@ -261,23 +260,18 @@ uchar usbFunctionRead(uchar *data, uchar len) {
 
 	DBG(("read"));
 
-	switch (bootloaderState) {
-		case BOOTLOADER_STATE_PAGE_READ:
-			{
-				while ((ret < len) && (dataSize > 0)) {
-					data[ret++] = pgm_read_byte(currentAddress++);
+	if (bootloaderState == BOOTLOADER_STATE_PAGE_READ) {
+		while (ret < len) {
+			data[ret++] = pgm_read_byte(currentAddress++);
 
-					dataSize--;
-				}
+			dataSize--;
 
-				if (dataSize == 0) {
-					bootloaderState = BOOTLOADER_STATE_IDLE;
-				}
+			if (dataSize == 0) {
+				bootloaderState = BOOTLOADER_STATE_IDLE;
+
+				break;
 			}
-			break;
-
-		default:
-			break;
+		}
 	}
 
     return ret;
@@ -289,42 +283,35 @@ uchar usbFunctionWrite(uchar *data, uchar len) {
 
 	DBG(("write"));
 
-	switch (bootloaderState) {
-		case BOOTLOADER_STATE_PAGE_WRITE:
-			{
-				_U8 idx  = 0;
-				_U8 addr = SPM_PAGESIZE - dataSize;
+	if (bootloaderState == BOOTLOADER_STATE_PAGE_WRITE) {
+		_U8 idx  = 0;
+		_U8 addr = SPM_PAGESIZE - dataSize;
 
-				while ((idx <= len - 2) && (dataSize >= 2)) {
-					// Address is incremented by 1 per one data word (2 bytes)
-					DBG(("FP"));
+		while ((idx <= len - 2) && (dataSize >= 2)) {
+			// Address is incremented by 1 per one data word (2 bytes)
+			DBG(("FP"));
 
-					boot_spm_busy_wait();
-					boot_page_fill(addr, (_U16) data[idx] | (_U16) (data[idx + 1] << 8));
+			boot_spm_busy_wait();
+			boot_page_fill(addr, (_U16) data[idx] | (_U16) (data[idx + 1] << 8));
 
-					addr     += 2;
-					dataSize -= 2;
-					idx      += 2;
-				}
+			addr     += 2;
+			dataSize -= 2;
+			idx      += 2;
+		}
 
-				if (dataSize == 0) {
-					DBG(("PC"));
+		if (dataSize == 0) {
+			DBG(("PC"));
 
-					boot_spm_busy_wait();
-					boot_page_write(currentAddress);
+			boot_spm_busy_wait();
+			boot_page_write(currentAddress);
 
-					boot_spm_busy_wait();
-					boot_rww_enable();
+			boot_spm_busy_wait();
+			boot_rww_enable();
 
-					bootloaderState = BOOTLOADER_STATE_IDLE;
+			bootloaderState = BOOTLOADER_STATE_IDLE;
 
-					ret = 1;
-				}
-			}
-			break;
-
-		default:
-			break;
+			ret = 1;
+		}
 	}
 
 	return ret;
@@ -333,7 +320,7 @@ uchar usbFunctionWrite(uchar *data, uchar len) {
 /* ------------------------------------------------------------------------- */
 
 __attribute__((OS_main)) int main(void) {
-#if ENABLE_DEBUG
+#if defined(DEBUG)
 	debug_initialize();
 #endif
 
@@ -343,8 +330,6 @@ __attribute__((OS_main)) int main(void) {
 	_delay_ms(500);
 	SET_PIO_HIGH(PORTB, 1);
 #endif
-
-	SET_PIO_AS_INPUT(DECLARE_DDR(BOOTLOADER_ACTIVATION_PIO_BANK), BOOTLOADER_ACTIVATION_PIO_PIN);
 
 	DBG(("C"));
 
@@ -379,8 +364,10 @@ __attribute__((OS_main)) int main(void) {
 		}
 	}
 
+	SET_PIO_AS_INPUT(DECLARE_DDR(BOOTLOADER_ACTIVATION_PIO_BANK), BOOTLOADER_ACTIVATION_PIO_PIN);
+
 	if (
-		! PIO_IS_HIGH(DECLARE_PIN(BOOTLOADER_ACTIVATION_PIO_BANK), BOOTLOADER_ACTIVATION_PIO_PIN) &&
+		! PIO_IS_LOW(DECLARE_PIN(BOOTLOADER_ACTIVATION_PIO_BANK), BOOTLOADER_ACTIVATION_PIO_PIN) &&
 		imageInFlashIsValid
 	) {
 		void (*entryPoint)() = 0x0000;
@@ -419,7 +406,7 @@ __attribute__((OS_main)) int main(void) {
 
     sei();
 
-    while (! reset) {
+    while (bootloaderState != BOOTLOADER_STATE_RESET) {
         // main event loop
         wdt_reset();
 
@@ -447,7 +434,7 @@ __attribute__((OS_main)) int main(void) {
 			// Move interrupts to Main section
 			CLEAR_BIT_AT(MCUCR, IVSEL);
 		}
-#if ENABLE_DEBUG
+#if defined(DEBUG)
 		debug_terminate();
 #endif
 
@@ -458,5 +445,5 @@ __attribute__((OS_main)) int main(void) {
 		}
 	}
 
-    return;
+    return 0;
 }

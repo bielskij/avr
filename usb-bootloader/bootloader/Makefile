@@ -27,7 +27,7 @@ APPLICATION_NAME := usb-jboot
 CFLAGS += -I$(DIR_INC) -I$(DIR_INC)/bootloader/vusb
 
 ifeq ($(DEBUG), 1)
-	CFLAGS += -DENABLE_DEBUG
+	CFLAGS += -DDEBUG
 endif
 
 init:

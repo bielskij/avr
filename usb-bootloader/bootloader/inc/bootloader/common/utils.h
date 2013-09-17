@@ -14,6 +14,7 @@
 #define SET_PIO_LOW(port, pin)  { port &= ~ONE_LEFT_SHIFTED(pin); }
 
 #define PIO_IS_HIGH(pin, pinno) (CHECK_BIT_AT(pin, pinno))
+#define PIO_IS_LOW(pin, pinno) (! CHECK_BIT_AT(pin, pinno))
 
 #define SET_PIO_AS_OUTPUT(ddr, pin) { ddr |= ONE_LEFT_SHIFTED(pin); }
 #define SET_PIO_AS_INPUT(ddr, pin)  { ddr &= ~(ONE_LEFT_SHIFTED(pin)); }

@@ -14,6 +14,7 @@
  *     Jaroslaw Bielski (bielski.j@gmail.com)
  *********************************************
  *
+ *
  * @brief Common debug API.
  *
  * This API provide common methods used to debug the source code.
@@ -51,7 +52,7 @@ void debug_terminate(void);
  *
  * @param[in] buffer  string to print.
  */
-void drv_debug_print(char *buffer);
+void debug_print(char *buffer);
 
 /**
  * @name
@@ -63,9 +64,9 @@ void drv_debug_print(char *buffer);
  * @param[in] data          variable to print.
  * @param[in] lengthInBytes variable length in bytes
  */
-void drv_debug_dumpHex(_U16 data, _U8 lengthInBytes);
+void debug_dumpHex(_U16 data, _U8 lengthInBytes);
 
-#ifdef ENABLE_DEBUG
+#if defined(DEBUG)
 	#define DBG(x) { debug_print x; debug_print("\n"); }
 #else
 	#define DBG(x) {}
