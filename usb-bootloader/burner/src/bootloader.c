@@ -1,7 +1,6 @@
 #include <usb.h>
 #include <string.h>
 #include <unistd.h>
-#include <fcntl.h>
 
 #include "bootloader/common/protocol.h"
 #include "burner/bootloader.h"
@@ -156,7 +155,7 @@ static CommonError _mcuCommandGetInfo(McuInformation *info, _U32 timeout) {
 		}
 
 		if (response[0] != BOOTLOADER_COMMON_COMMAND_STATUS_OK) {
-			ERR(("_mcuCommandGetInfo(): Bad response! %#x", response));
+			ERR(("_mcuCommandGetInfo(): Bad response! %#x", response[0]));
 
 			ret = COMMON_ERROR_BAD_PARAMETER;
 			break;
@@ -337,12 +336,50 @@ static CommonError _mcuCommandFlashPageWrite(_U32 pageNumber, _U8 *buffer, _U32 
 	return ret;
 }
 
-//BOOTLOADER_COMMON_COMMAND_FLASH_READ_PAGE,
 
-//BOOTLOADER_COMMON_COMMAND_FLASH_WRITE_PAGE,
+static CommonError _mcuCommandE2Prom(_U32 offset, _U8 *buffer, _U32 bufferSize, _U32 timeout) {
+	CommonError ret = COMMON_NO_ERROR;
+
+	do {
+		_U32 i;
+
+		for (i = 0; i < bufferSize; i++) {
+			_S32 usbRet;
+			_U8  response[2];
+
+			usbRet = usb_control_msg(
+				privateData.deviceHandle,
+				USB_TYPE_VENDOR | USB_RECIP_DEVICE | USB_ENDPOINT_IN,
+				BOOTLOADER_COMMON_COMMAND_E2PROM_READ,
+				0,
+				offset + i,
+				response,
+				2,
+				timeout
+			);
+			if (usbRet < 0) {
+				ERR(("_mcuCommandE2Prom(): USB error '%s'!", usb_strerror()));
+
+				ret = COMMON_ERROR;
+				break;
+			}
+
+			if ((usbRet != 2) || (response[0] != BOOTLOADER_COMMON_COMMAND_STATUS_OK)) {
+				ERR(("_mcuCommandE2Prom(): Bad response!, %d", usbRet));
+
+				ret = COMMON_ERROR_BAD_PARAMETER;
+				break;
+			}
+
+			buffer[i] = response[1];
+		}
+	} while (0);
+
+	return ret;
+}
+
 //BOOTLOADER_COMMON_COMMAND_E2PROM_READ,
 //BOOTLOADER_COMMON_COMMAND_E2PROM_WRITE,
-//BOOTLOADER_COMMON_COMMAND_REBOOT
 
 
 _S32 usbGetStringAscii(usb_dev_handle *dev, int index, char *buf, int buflen) {
@@ -652,7 +689,7 @@ CommonError bootloader_connect(BootloaderTargetInformation *targetInformation, _
 					}
 
 					if (privateData.mcuParameters == NULL) {
-						ERR(("bootloader_connect(): Not supported MCU! (%02%02x%02x)", info.signature.byte1, info.signature.byte2, info.signature.byte3));
+						ERR(("bootloader_connect(): Not supported MCU! (%02x%02x%02x)", info.signature.byte1, info.signature.byte2, info.signature.byte3));
 
 						ret = COMMON_ERROR_NO_DEVICE;
 						break;
@@ -741,7 +778,7 @@ CommonError bootloader_flashPageRead(_U32 pageAddress, _U8 *pageBuffer, _U32 pag
 	{
 		DBG(("bootloader_flashPageRead(): Reading from page %d", pageAddress));
 
-		_mcuCommandFlashPageRead(pageAddress, pageBuffer, pageBufferSize, timeout);
+		ret = _mcuCommandFlashPageRead(pageAddress, pageBuffer, pageBufferSize, timeout);
 	}
 
 	return ret;
@@ -756,7 +793,7 @@ CommonError bootloader_flashPageWrite(_U32 pageAddress, _U8 *pageBuffer, _U32 pa
 	{
 		DBG(("bootloader_flashPageWrite(): Writing page number: %d", pageAddress));
 
-		_mcuCommandFlashPageWrite(pageAddress, pageBuffer, pageBufferSize, timeout);
+		ret = _mcuCommandFlashPageWrite(pageAddress, pageBuffer, pageBufferSize, timeout);
 	}
 
 	return ret;
@@ -769,7 +806,9 @@ CommonError bootloader_e2promRead(_U32 address, _U8 *e2promBuffer, _U32 e2promBu
 	ASSERT(initialized);
 
 	{
+		DBG(("bootloader_e2promRead(): Reading e2prom from: %d, size: %d", address, e2promBufferSize));
 
+		ret = _mcuCommandE2Prom(address, e2promBuffer, e2promBufferSize, timeout);
 	}
 
 	return ret;

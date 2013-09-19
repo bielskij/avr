@@ -138,6 +138,12 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 						{
 							DBG(("WPAG"));
 
+							if (wIndex >= BOOTLOADER_APPLICATION_PAGES_COUNT) {
+								responseBuffer[ret++] = BOOTLOADER_COMMON_COMMAND_STATUS_ERROR;
+
+								break;
+							}
+
 							bootloaderState = BOOTLOADER_STATE_PAGE_WRITE;
 
 							currentAddress  = wIndex * SPM_PAGESIZE;
@@ -168,22 +174,30 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 						{
 							DBG(("GETI"));
 
-							responseBuffer[ret++] = BOOTLOADER_COMMON_COMMAND_STATUS_OK;
+							responseBuffer[ret + 0] = BOOTLOADER_COMMON_COMMAND_STATUS_OK;
 							// Version
-							responseBuffer[ret++] = BOOTLOADER_VERSION_MAJOR;
-							responseBuffer[ret++] = BOOTLOADER_VERSION_MINOR;
+							responseBuffer[ret + 1] = BOOTLOADER_VERSION_MAJOR;
+							responseBuffer[ret + 2] = BOOTLOADER_VERSION_MINOR;
 							// Size in pages of boot area
-							responseBuffer[ret++] = BOOTLOADER_SIZE_IN_PAGES;
+							responseBuffer[ret + 3] = BOOTLOADER_SIZE_IN_PAGES;
 
-							responseBuffer[ret++] = SIGNATURE_0;
-							responseBuffer[ret++] = SIGNATURE_1;
-							responseBuffer[ret++] = SIGNATURE_2;
+							responseBuffer[ret + 4] = SIGNATURE_0;
+							responseBuffer[ret + 5] = SIGNATURE_1;
+							responseBuffer[ret + 6] = SIGNATURE_2;
+
+							ret = 7;
 						}
 						break;
 
 					case BOOTLOADER_COMMON_COMMAND_FLASH_READ_PAGE:
 						{
 							DBG(("RPAG"));
+
+							if (wIndex >= BOOTLOADER_APPLICATION_PAGES_COUNT) {
+								responseBuffer[ret++] = BOOTLOADER_COMMON_COMMAND_STATUS_ERROR;
+
+								break;
+							}
 
 							bootloaderState = BOOTLOADER_STATE_PAGE_READ;
 
@@ -216,8 +230,10 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 						{
 							DBG(("EREA"));
 
-							responseBuffer[ret++] = BOOTLOADER_COMMON_COMMAND_STATUS_OK;
-							responseBuffer[ret++] = _e2promRead(wIndex);
+							responseBuffer[ret + 0] = BOOTLOADER_COMMON_COMMAND_STATUS_OK;
+							responseBuffer[ret + 1] = _e2promRead(wIndex);
+
+							ret = 2;
 						}
 						break;
 
@@ -262,9 +278,10 @@ uchar usbFunctionRead(uchar *data, uchar len) {
 
 	if (bootloaderState == BOOTLOADER_STATE_PAGE_READ) {
 		while (ret < len) {
-			data[ret++] = pgm_read_byte(currentAddress++);
+			data[ret] = pgm_read_byte(currentAddress++);
 
-			dataSize--;
+			ret      += 1;
+			dataSize -= 1;
 
 			if (dataSize == 0) {
 				bootloaderState = BOOTLOADER_STATE_IDLE;
@@ -287,7 +304,7 @@ uchar usbFunctionWrite(uchar *data, uchar len) {
 		_U8 idx  = 0;
 		_U8 addr = SPM_PAGESIZE - dataSize;
 
-		while ((idx <= len - 2) && (dataSize >= 2)) {
+		while (idx < len) {
 			// Address is incremented by 1 per one data word (2 bytes)
 			DBG(("FP"));
 
@@ -297,6 +314,10 @@ uchar usbFunctionWrite(uchar *data, uchar len) {
 			addr     += 2;
 			dataSize -= 2;
 			idx      += 2;
+
+			if (dataSize == 0) {
+				break;
+			}
 		}
 
 		if (dataSize == 0) {
@@ -342,7 +363,7 @@ __attribute__((OS_main)) int main(void) {
 		while (addr < BOOTLOADER_BYTE_APP_CRC8_INV) {
 			imageChecksum = crc8_getForByte(pgm_read_byte(addr), IMAGE_CHECKSUM_POLYNOMIAL, imageChecksum);
 
-			addr++;
+			addr += 1;
 		}
 
 		DBG(("D"));
@@ -394,12 +415,14 @@ __attribute__((OS_main)) int main(void) {
     // enforce re-enumeration, do this while interrupts are disabled!
     usbDeviceDisconnect();
     {
-    	_U8 i = 0;
+    	_U8 i = 255;
 
     	// fake USB disconnect for > 250 ms
-        while (--i) {
+        while (i) {
             wdt_reset();
             _delay_ms(1);
+
+            i -= 1;
         }
     }
     usbDeviceConnect();

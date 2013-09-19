@@ -9,7 +9,7 @@ OBJ := $(foreach file, $(TMP), $(shell echo $(file) | sed -e 's|\.c$$|$(OBJ_SUFF
 DEP := $(foreach file, $(TMP), $(shell echo $(file) | sed -e 's|\.c$$|.c.d|')) 
 
 ifeq ($(DEBUG), 1)
-  CFLAGS += -DENABLE_DEBUG
+  CFLAGS += -DENABLE_DEBUG -g
 endif
 
 CFLAGS += -I$(DIR_INC) -I../bootloader/inc
