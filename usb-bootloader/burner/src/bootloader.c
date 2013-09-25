@@ -337,7 +337,7 @@ static CommonError _mcuCommandFlashPageWrite(_U32 pageNumber, _U8 *buffer, _U32 
 }
 
 
-static CommonError _mcuCommandE2Prom(_U32 offset, _U8 *buffer, _U32 bufferSize, _U32 timeout) {
+static CommonError _mcuCommandE2PromRead(_U32 offset, _U8 *buffer, _U32 bufferSize, _U32 timeout) {
 	CommonError ret = COMMON_NO_ERROR;
 
 	do {
@@ -378,8 +378,47 @@ static CommonError _mcuCommandE2Prom(_U32 offset, _U8 *buffer, _U32 bufferSize, 
 	return ret;
 }
 
-//BOOTLOADER_COMMON_COMMAND_E2PROM_READ,
-//BOOTLOADER_COMMON_COMMAND_E2PROM_WRITE,
+
+static CommonError _mcuCommandE2PromWrite(_U32 offset, _U8 *buffer, _U32 bufferSize, _U32 timeout) {
+	CommonError ret = COMMON_NO_ERROR;
+
+	do {
+		_U32 i;
+
+		DBG(("_mcuCommandE2PromWrite(): Call for buffer: %p, bufferSize: %d", buffer, bufferSize));
+
+		for (i = 0; i < bufferSize; i++) {
+			_S32 usbRet;
+			_U8  response;
+
+			usbRet = usb_control_msg(
+				privateData.deviceHandle,
+				USB_TYPE_VENDOR | USB_RECIP_DEVICE | USB_ENDPOINT_IN,
+				BOOTLOADER_COMMON_COMMAND_E2PROM_WRITE,
+				buffer[i],
+				offset + i,
+				&response,
+				2,
+				timeout
+			);
+			if (usbRet < 0) {
+				ERR(("_mcuCommandE2PromWrite(): USB error '%s'!", usb_strerror()));
+
+				ret = COMMON_ERROR;
+				break;
+			}
+
+			if ((usbRet != 1) || (response != BOOTLOADER_COMMON_COMMAND_STATUS_OK)) {
+				ERR(("_mcuCommandE2PromWrite(): Bad response!, %d", usbRet));
+
+				ret = COMMON_ERROR_BAD_PARAMETER;
+				break;
+			}
+		}
+	} while (0);
+
+	return ret;
+}
 
 
 _S32 usbGetStringAscii(usb_dev_handle *dev, int index, char *buf, int buflen) {
@@ -747,9 +786,11 @@ CommonError bootloader_reset(_U32 timeout) {
 
 	ASSERT(initialized);
 
-	do {
+	{
+		DBG(("bootloader_reset(): Reset"));
+
 		ret = _mcuCommandReboot(timeout);
-	} while (0);
+	}
 
 	return ret;
 }
@@ -808,7 +849,7 @@ CommonError bootloader_e2promRead(_U32 address, _U8 *e2promBuffer, _U32 e2promBu
 	{
 		DBG(("bootloader_e2promRead(): Reading e2prom from: %d, size: %d", address, e2promBufferSize));
 
-		ret = _mcuCommandE2Prom(address, e2promBuffer, e2promBufferSize, timeout);
+		ret = _mcuCommandE2PromRead(address, e2promBuffer, e2promBufferSize, timeout);
 	}
 
 	return ret;
@@ -821,7 +862,9 @@ CommonError bootloader_e2promWrite(_U32 address, _U8 *e2promBuffer, _U32 e2promB
 	ASSERT(initialized);
 
 	{
+		DBG(("bootloader_e2promWrite(): Writing e2prom at: %d, size: %d", address, e2promBufferSize));
 
+		ret = _mcuCommandE2PromWrite(address, e2promBuffer, e2promBufferSize, timeout);
 	}
 
 	return ret;

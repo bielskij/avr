@@ -10,7 +10,7 @@
 #include "burner/common/types.h"
 #include "burner/bootloader.h"
 
-#define DEBUG_LEVEL 5
+#define DEBUG_LEVEL 4
 #include "burner/common/debug.h"
 
 
@@ -48,7 +48,7 @@ typedef struct _BurnerOperationDescription {
 		} erase;
 
 		struct {
-			_U32 offset;
+			_S32 offset;
 		} write;
 	} parameters;
 
@@ -164,6 +164,8 @@ static CommonError _handleReadE2prom(E2promMemory *e2prom, _U32 offset, _U32 siz
 	CommonError ret = COMMON_NO_ERROR;
 
 	{
+		REPORT(("Reading %d bytes from e2prom at offset: %d", size, offset));
+
 		ret = bootloader_e2promRead(offset, e2prom->buffer + offset, size, BOOTLOADER_TIMEOUT, NULL);
 		if (ret != COMMON_NO_ERROR) {
 			REPORT_ERR(("Unable to read e2prom memory!"));
@@ -218,7 +220,7 @@ static CommonError _handleRead(BurnerOperationDescription *operation, FlashMemor
 			if (strlen(operation->path.output) > 0) {
 				outputFile = open(operation->path.output, O_CREAT | O_TRUNC | O_WRONLY, S_IRUSR | S_IWUSR);
 				if (outputFile < 0) {
-					REPORT_ERR(("Unable to open output file."));
+					REPORT_ERR(("Unable to open output file. (%m)"));
 
 					ret = COMMON_ERROR;
 					break;
@@ -286,6 +288,315 @@ static CommonError _handleRead(BurnerOperationDescription *operation, FlashMemor
 			close(outputFile);
 		}
 	}
+
+	return ret;
+}
+
+
+static CommonError _handleErase(BurnerOperationDescription *operation, FlashMemory *flash, E2promMemory *e2prom) {
+	CommonError ret = COMMON_NO_ERROR;
+
+	do {
+		if (operation->parameters.erase.endPage >= flash->blocksCount) {
+			REPORT_ERR(("Last page is out of flash memory bounds!"));
+
+			ret = COMMON_ERROR_BAD_PARAMETER;
+			break;
+		}
+
+		{
+			_U32 i;
+
+			for (i = operation->parameters.erase.startPage; i <= operation->parameters.erase.endPage; i++) {
+				ret = bootloader_flashPageErase(i, BOOTLOADER_TIMEOUT);
+				if (ret != COMMON_NO_ERROR) {
+					REPORT_ERR(("Unable to erase page %d!", i));
+
+					break;
+				}
+
+				REPORT(("Page %d erased.", i));
+			}
+		}
+	} while (0);
+
+	return ret;
+}
+
+
+static CommonError _handleWriteFlash(FlashMemory *flash, _U32 offset, _U8 *buffer, _U32 bufferSize) {
+	CommonError ret = COMMON_NO_ERROR;
+
+	do {
+		_S32 pageStart = -1;
+		_S32 pageEnd   = -1;
+
+		DBG(("_handleWriteFlash(): Call for offset: %d, size: %d", offset, bufferSize));
+
+		_getPageNumberByOffsetAndSize(flash->blockSize, flash->blocksCount, offset, bufferSize, &pageStart, &pageEnd);
+
+		DBG(("_handleWriteFlash(): Writing pages: %d - %d", pageStart, pageEnd));
+
+		if (offset % flash->blockSize != 0) {
+			DBG(("_handleWriteFlash(): Reading %d page.", pageStart));
+
+			ret = bootloader_flashPageRead(pageStart, flash->blocks[pageStart].data, flash->blockSize, BOOTLOADER_TIMEOUT, NULL);
+			if (ret != COMMON_NO_ERROR) {
+				ERR(("_handleWriteFlash(): Error reading from flash!"));
+
+				break;
+			}
+
+			flash->blocks[pageStart].read = TRUE;
+		}
+
+		if (
+			((offset + bufferSize) % flash->blockSize != 0) &&
+			(pageStart != pageEnd)
+		) {
+			DBG(("_handleWriteFlash(): Reading %d page.", pageEnd));
+
+			ret = bootloader_flashPageRead(pageEnd, flash->blocks[pageEnd].data, flash->blockSize, BOOTLOADER_TIMEOUT, NULL);
+			if (ret != COMMON_NO_ERROR) {
+				ERR(("_handleWriteFlash(): Error reading from flash!"));
+
+				break;
+			}
+
+			flash->blocks[pageEnd].read = TRUE;
+		}
+
+		memcpy(flash->buffer + offset, buffer, bufferSize);
+
+		{
+			_U8 *pageBuffer = NULL;
+
+			pageBuffer = malloc(flash->blockSize);
+			if (pageBuffer == NULL) {
+				ERR(("_handleWriteFlash(): No more free memory!"));
+
+				ret = COMMON_ERROR_NO_FREE_RESOURCES;
+				break;
+			}
+
+			while (pageStart <= pageEnd) {
+				REPORT(("Erasing page   %d.", pageStart));
+				ret |= bootloader_flashPageErase(pageStart, BOOTLOADER_TIMEOUT);
+
+				REPORT(("Writing page   %d.", pageStart));
+				ret |= bootloader_flashPageWrite(pageStart, flash->blocks[pageStart].data, flash->blockSize, BOOTLOADER_TIMEOUT, NULL);
+
+				REPORT(("Verifying page %d.", pageStart));
+				ret |= bootloader_flashPageRead(pageStart, pageBuffer, flash->blockSize, BOOTLOADER_TIMEOUT, NULL);
+
+				if (ret != COMMON_NO_ERROR) {
+					REPORT_ERR(("Unable to write page %d!", pageStart));
+
+					break;
+				}
+
+				if (memcmp(pageBuffer, flash->blocks[pageStart].data, flash->blockSize) != 0) {
+					REPORT_ERR(("Verification failed!"));
+
+					ret = COMMON_ERROR;
+					break;
+				}
+
+				REPORT(("Page %d has written and verified.", pageStart));
+
+				flash->blocks[pageStart].read = TRUE;
+
+				pageStart++;
+			}
+
+			free(pageBuffer);
+		}
+	} while (0);
+
+	return ret;
+}
+
+
+static CommonError _handleWriteE2prom(E2promMemory *e2prom, _U32 offset, _U8 *buffer, _U32 bufferSize) {
+	CommonError ret = COMMON_NO_ERROR;
+
+	{
+		REPORT(("Writing %d bytes to e2prom at offset: %d", bufferSize, offset));
+
+		ret = bootloader_e2promWrite(offset, buffer, bufferSize, BOOTLOADER_TIMEOUT, NULL);
+		if (ret != COMMON_NO_ERROR) {
+			REPORT_ERR(("Unable to write e2prom memory!"));
+		}
+	}
+
+	return ret;
+}
+
+
+static CommonError _handleWrite(BurnerOperationDescription *operation, FlashMemory *flash, E2promMemory *e2prom) {
+	CommonError ret = COMMON_NO_ERROR;
+
+	{
+		_S32 inputFile       = -1;
+		_U8 *inputFileBuffer = NULL;
+
+		do {
+			_U32 memorySize;
+			_U32 inputFileSize;
+
+			inputFile = open(operation->path.input, O_RDONLY);
+			if (inputFile < 0) {
+				REPORT_ERR(("Unable to open input file! (%m)"));
+
+				ret = COMMON_ERROR;
+				break;
+			}
+
+			{
+				struct stat stats = { 0 };
+
+				if (fstat(inputFile, &stats) < 0) {
+					REPORT_ERR(("Unable to stat input file! (%m)"));
+
+					ret = COMMON_ERROR;
+					break;
+				}
+
+				inputFileSize = stats.st_size;
+			}
+
+			if (operation->memoryType == BURNER_MEMORY_TYPE_FLASH) {
+				// Prereserve memory for checksum
+				memorySize = flash->blockSize * flash->blocksCount - 2;
+
+			} else {
+				memorySize = e2prom->size;
+			}
+
+			if (inputFileSize + operation->parameters.write.offset > memorySize) {
+				REPORT_ERR(("Input file doesn't fit into memory!"));
+
+				ret = COMMON_ERROR;
+				break;
+			}
+
+			inputFileBuffer = malloc(inputFileSize);
+			if (inputFileBuffer == NULL) {
+				ERR(("_handleWrite(): No more free memory!"));
+
+				ret = COMMON_ERROR_NO_FREE_RESOURCES;
+				break;
+			}
+
+			if (read(inputFile, inputFileBuffer, inputFileSize) != inputFileSize) {
+				REPORT_ERR(("Error reading input file! (%m)"));
+
+				ret = COMMON_ERROR;
+				break;
+			}
+
+			if (operation->memoryType == BURNER_MEMORY_TYPE_FLASH) {
+				ret = _handleWriteFlash(flash, operation->parameters.write.offset, inputFileBuffer, inputFileSize);
+
+			} else {
+				ret = _handleWriteE2prom(e2prom, operation->parameters.write.offset, inputFileBuffer, inputFileSize);
+			}
+			if (ret != COMMON_NO_ERROR) {
+				REPORT_ERR(("Error writing input file to '%s' memory!.", operation->memoryType == BURNER_MEMORY_TYPE_FLASH ? "flash" : "e2prom"));
+
+				break;
+			}
+		} while (0);
+
+		if (inputFileBuffer != NULL) {
+			free(inputFileBuffer);
+		}
+
+		if (inputFile >= 0) {
+			close(inputFile);
+		}
+	}
+
+	return ret;
+}
+
+
+static _U8 crc8_getForByte(_U8 byte, _U8 polynomial, _U8 start) {
+	_U8 remainder = start;
+
+	remainder ^= byte;
+
+	{
+		_U8 bit;
+
+		for (bit = 0; bit < 8; bit++) {
+			if (remainder & 0x01) {
+				remainder = (remainder >> 1) ^ polynomial;
+
+			} else {
+				remainder = (remainder >> 1);
+			}
+
+		}
+	}
+
+    return remainder;
+}
+
+
+static _U8 crc8_get(_U8 *buffer, _U16 bufferSize, _U8 polynomial, _U8 start) {
+	_U8  remainder = start;
+	_U16 byte;
+
+	// Perform modulo-2 division, a byte at a time.
+	for (byte = 0; byte < bufferSize; byte++) {
+		remainder = crc8_getForByte(buffer[byte], polynomial, remainder);
+	}
+
+    return remainder;
+}
+
+
+static CommonError _handleCommit(FlashMemory *flash) {
+	CommonError ret = COMMON_NO_ERROR;
+
+	do {
+		_U32 i;
+
+		for (i = 0; i < flash->blocksCount; i++) {
+			if (! flash->blocks[i].read) {
+				ret = bootloader_flashPageRead(i, flash->blocks[i].data, flash->blockSize, BOOTLOADER_TIMEOUT, NULL);
+				if (ret != COMMON_NO_ERROR) {
+					REPORT_ERR(("Unable to read page %d!", i));
+
+					break;
+				}
+
+				DBG(("Page: %d read.", i));
+			}
+		}
+
+		if (ret != COMMON_NO_ERROR) {
+			break;
+		}
+
+		{
+			_U8  checksum   = crc8_get(flash->buffer, (flash->blocksCount * flash->blockSize) - 1, IMAGE_CHECKSUM_POLYNOMIAL, 0);
+			_U32 pageNumber = flash->blocksCount - 1;
+
+			DBG(("CRC8: %x", checksum));
+
+			flash->blocks[pageNumber].data[flash->blockSize - 1] = checksum;
+
+			ret |= bootloader_flashPageErase(pageNumber, BOOTLOADER_TIMEOUT);
+			ret |= bootloader_flashPageWrite(pageNumber, flash->blocks[pageNumber].data, flash->blockSize, BOOTLOADER_TIMEOUT, NULL);
+			if (ret != COMMON_NO_ERROR) {
+				REPORT_ERR(("Error writing checksum to flash memory!"));
+
+				break;
+			}
+		}
+	} while (0);
 
 	return ret;
 }
@@ -475,7 +786,8 @@ int main(int argc, char *argv[]) {
 
 					case 3:
 						{
-							operation.parameters.read.offset = atoi(optarg);
+							operation.parameters.read.offset  = atoi(optarg);
+							operation.parameters.write.offset = atoi(optarg);
 						}
 						break;
 
@@ -583,7 +895,17 @@ int main(int argc, char *argv[]) {
 			// Perform operation
 			switch (operation.type) {
 				case BURNER_OPERATION_ERASE:
-					ret = bootloader_flashPageErase(0, 1000);
+					{
+						if (operation.parameters.erase.startPage < 0) {
+							operation.parameters.erase.startPage = 0;
+						}
+
+						if (operation.parameters.erase.endPage < 0) {
+							operation.parameters.erase.endPage = targetInformation.flash.pagesCount - 1;
+						}
+
+						ret = _handleErase(&operation, &flashMemory, &e2promMemory);
+					}
 					break;
 
 				case BURNER_OPERATION_READ:
@@ -610,20 +932,31 @@ int main(int argc, char *argv[]) {
 
 				case BURNER_OPERATION_WRITE:
 					{
-						_U8 pageBuffer[128];
-
-						_U32 i;
-
-						for (i = 0; i < 128; i++) {
-							pageBuffer[i] = i;
+						// Set default parameters if needed
+						if (operation.parameters.write.offset < 0) {
+							operation.parameters.write.offset = 0;
 						}
 
-						bootloader_flashPageWrite(0, pageBuffer, 128, 1000, &i);
+						ret = _handleWrite(&operation, &flashMemory, &e2promMemory);
 					}
 					break;
 
 				default:
 					break;
+			}
+			if (ret != COMMON_NO_ERROR) {
+				REPORT_ERR(("Operation failed!"));
+
+				break;
+			}
+
+			if (operation.commit) {
+				ret = _handleCommit(&flashMemory);
+				if (ret != COMMON_NO_ERROR) {
+					REPORT_ERR(("Unable to write flash checksum!"));
+
+					break;
+				}
 			}
 		}
 
