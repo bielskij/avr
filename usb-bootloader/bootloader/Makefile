@@ -38,5 +38,15 @@ all: init $(OBJ) $(DIR_OUT)/$(APPLICATION_NAME).elf $(DIR_OUT)/$(APPLICATION_NAM
 clean:
 	$(RM) -rf $(DIR_OUT)
 
+burn: all
+ifeq ($(MCU),atmega328p)
+	avrdude -p m328p -P usb -c usbasp -u -U efuse:w:0x07:m -U hfuse:w:0xD8:m -U lfuse:w:0xF7:m
+	avrdude -p m328p -P usb -c usbasp -U flash:w:$(DIR_OUT)/$(APPLICATION_NAME).hex:i 
+else
+	$(ECHO) "Cannot burn MCU '$(MCU)'"
+endif
+
+#/usr/bin/avrdude -C /home/jarko/Pulpit/avr8-burn-o-mat/avrdude.conf.txt -p m328p -P usb -c usbasp  -u -U efuse:w:0x07:m -U hfuse:w:0xD8:m -U lfuse:w:0xF7:m
+
 -include $(PROJECT_ROOT)/Makefile.rules
 -include Makefile.rules

@@ -1,0 +1,20 @@
+0. Supported devices: Atmega328p
+
+1. Building bootloader.
+
+ $ make APPLICATION=bootloader clean all
+
+2. Building burner host application.
+ $ make APPLICATION=burner clean all
+ 
+3. Common build system variables:
+   DEBUG       - enables debug messages in runtime, default value is 0
+   APPLICATION - type of application to build, default value is bootloader
+   
+4. Burning bootloader into MCU flash
+
+ $ make APPLICATION=bootloader burn
+ 
+5. Usage cases of burner application:
+
+5.1. See help message from application when no args are provided.

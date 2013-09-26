@@ -10,3 +10,6 @@ all:
  
 clean:
 	$(MAKE) -C $(APPLICATION) clean
+
+burn:
+	$(MAKE) -C bootloader burn
