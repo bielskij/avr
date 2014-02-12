@@ -18,15 +18,15 @@
 
 // 942 nF
 
+// supported inductance range: 4,7uH - 50 mH
+
 #define LOAD_PIO_BANK C
 #define LOAD_PIO_PIN  4
 
 #define SAMPLES_COUNT 8
 
 
-volatile _BOOL falling;
-volatile _U8 samplesCount;
-
+volatile _U8  samplesCount;
 volatile _U16 samples[SAMPLES_COUNT];
 
 
@@ -35,7 +35,6 @@ static FILE mystdout = FDEV_SETUP_STREAM(debug_putc, NULL, _FDEV_SETUP_WRITE);
 
 ISR(TIMER1_CAPT_vect) {
 	if (samplesCount >= SAMPLES_COUNT) {
-		samplesCount++;
 		return;
 	}
 
@@ -50,6 +49,7 @@ ISR(ANALOG_COMP_vect) {
 	// by the Analog Comparator.
 	ACSR |= _BV(ACIC);
 
+	// Start timer1
 	TCCR1B |= _BV(CS11);
 }
 
@@ -98,8 +98,6 @@ void main(void) {
 			switch (c) {
 				case 'l':
 					{
-						DBG(("L"));
-
 						// Load capacitor with coil
 						_loadPioSet(TRUE);
 
@@ -121,23 +119,22 @@ void main(void) {
 						// Enable interrupt on Analog comparator
 						ACSR |= _BV(ACIE);
 
+						//
 						_loadPioSet(FALSE);
 
 						_delay_ms(200);
 
+						// Disable interrupt on Analog comparator
+						ACSR &= ~_BV(ACIE);
+
+						// Stop timer
 						{
-							TCCR1B &= ~_BV(CS11);
 							TIMSK1 &= ~_BV(ICIE1);
+							TCCR1B &= ~_BV(CS11);
 						}
 
+						// Disable ICP
 						ACSR &= ~_BV(ACIC);
-
-						// Disable interrupt on rising edge
-						ACSR &= ~_BV(ACIS0);
-						ACSR &= ~_BV(ACIS1);
-
-
-						DBG(("LE"));
 
 						printf("Samples: %d %d %d %d %d\r\n", samplesCount, samples[0], samples[1], samples[2], samples[3]);
 
@@ -147,8 +144,8 @@ void main(void) {
 
 							_U8 i;
 
-							if (samplesCount >= 3) {
-								frequency = (F_CPU / 8) / (float)(samples[2] - samples[1]);
+							if (samplesCount >= 2) {
+								frequency = (F_CPU / 8) / (float)(samples[1] - samples[0]);
 
 								inductance = 1000.0 / (float) (4.0 * M_PI * M_PI * frequency * frequency * 0.000000942); // w mH
 							}
