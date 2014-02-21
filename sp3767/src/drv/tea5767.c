@@ -140,7 +140,9 @@ static _S8 _i2cTransfer(_U8 buffer[5], _BOOL write) {
 		msg.data         = buffer;
 		msg.dataSize     = 5;
 
-		ret = drv_i2c_transfer(&msg, 1);
+		if (drv_i2c_transfer(&msg, 1) != 1) {
+			ret = -1;
+		}
 	}
 
 	return ret;

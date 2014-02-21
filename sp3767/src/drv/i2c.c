@@ -17,16 +17,15 @@
  *
  * @brief
  *
- * Software implementation of I2C bus. It directly uses gpio.
+ * Software implementation of I2C (only master mode) bus. It directly uses gpio.
  *
- * !! WARNING !!
- * It is only proof of concept. These piece of code was written to check radio tuner driver!
  */
 
 #include <avr/io.h>
 #include <util/delay.h>
 
 #include "common/utils.h"
+#include "common/debug.h"
 
 #include "drv/i2c.h"
 
@@ -94,15 +93,11 @@ static void _sclLow(void) {
 
 
 static void _stop(void) {
-	_sclLow();
-	{
-		I2C_WAIT;
+	_sdaOut();
+	_sdaLow();
 
-		_sdaOut();
-		_sdaLow();
+	I2C_WAIT;
 
-		I2C_WAIT;
-	}
 	_sclHigh();
 
 	I2C_WAIT;
@@ -113,44 +108,65 @@ static void _stop(void) {
 }
 
 
-static _U8 _getByte(_BOOL stop) {
-	_U8 i;
-	_U8 readByte = 0;
+static void _start(void) {
+	_sdaOut();
 
-	for (i = 0; i < 8; i++) {
-		readByte <<= 1;
+	_sdaHigh();
 
-		_sclLow();
-		{
-			I2C_WAIT;
+	I2C_WAIT;
 
-			_sdaIn();
-			_sdaHigh();
+	_sclHigh();
 
-			I2C_WAIT;
-		}
-		_sclHigh();
+	I2C_WAIT;
 
-		I2C_WAIT;
+	_sdaLow();
 
-		if (PIO_IS_HIGH(DECLARE_PIN(SDA_BANK), DECLARE_PIN(SDA_PIO))) {
-			readByte |= 0x01;
-		}
-
-		I2C_WAIT;
-	}
+	I2C_WAIT;
 
 	_sclLow();
-	{
-		I2C_WAIT;
 
+	I2C_WAIT;
+}
+
+
+static _U8 _byteRead(_BOOL ack) {
+	_U8 readByte = 0;
+
+	_sdaIn();
+	_sdaHigh();
+
+	{
+		_U8 i;
+
+		for (i = 0; i < 8; i++) {
+			readByte <<= 1;
+
+			I2C_WAIT;
+
+			_sclHigh();
+
+			I2C_WAIT;
+
+			if (PIO_IS_HIGH(DECLARE_PIN(SDA_BANK), DECLARE_PIN(SDA_PIO))) {
+				readByte |= 0x01;
+			}
+
+			I2C_WAIT;
+
+			_sclLow();
+
+			I2C_WAIT;
+		}
+	}
+
+	{
 		_sdaOut();
 
-		if (stop) {
-			_sdaHigh();
+		if (ack) {
+			_sdaLow();
 
 		} else {
-			_sdaLow();
+			_sdaHigh();
 		}
 
 		I2C_WAIT;
@@ -158,32 +174,23 @@ static _U8 _getByte(_BOOL stop) {
 	_sclHigh();
 
 	I2C_WAIT;
+	I2C_WAIT;
 
-	if (stop) {
-		_stop();
-	}
+	_sclLow();
+
+	I2C_WAIT;
 
 	return readByte;
 }
 
 
-static _BOOL _putByte(_U8 byte, _BOOL start, _BOOL stop) {
+static _BOOL _byteSend(_U8 byte) {
 	_BOOL ack;
 
-	if (start) {
-		_sdaOut();
-		_sdaLow();
+	{
+		_U8 i;
 
-		I2C_WAIT;
-	}
-
-	_U8 i;
-
-	for (i = 0; i < 8; i++) {
-		_sclLow();
-		{
-			I2C_WAIT;
-
+		for (i = 0; i < 8; i++) {
 			_sdaOut();
 
 			if (byte & 0x80) {
@@ -194,32 +201,36 @@ static _BOOL _putByte(_U8 byte, _BOOL start, _BOOL stop) {
 			}
 
 			I2C_WAIT;
+
+			_sclHigh();
+
+			I2C_WAIT;
+			I2C_WAIT;
+
+			_sclLow();
+
+			I2C_WAIT;
+
+			byte <<= 1;
 		}
-		_sclHigh();
-
-		I2C_WAIT;
-
-		byte <<= 1;
 	}
 
-	_sclLow();
-	{
-		I2C_WAIT;
+	_sdaIn();
+	_sdaHigh();
 
-		_sdaIn();
-		_sdaHigh();
+	I2C_WAIT;
 
-		I2C_WAIT;
-	}
 	_sclHigh();
 
 	I2C_WAIT;
 
 	ack = PIO_IS_LOW(DECLARE_PIN(SDA_BANK), DECLARE_PIN(SDA_PIO));
 
-	if (stop) {
-		_stop();
-	}
+	I2C_WAIT;
+
+	_sclLow();
+
+	I2C_WAIT;
 
 	return ack;
 }
@@ -248,8 +259,17 @@ void drv_i2c_detect(DrvI2cDetectCallback callback) {
 
 	// 7bit addressing 0x08 - 0x77
 	for (i = 0x08; i <= 0x77; i++) {
-		_BOOL ackR = _putByte((i << 1) | 0x01, TRUE, TRUE);
-		_BOOL ackW = _putByte((i << 1),        TRUE, TRUE);
+		_BOOL ackR;
+		_BOOL ackW;
+
+		_start();
+		ackR = _byteSend(i << 1 | 0x01);
+		_stop();
+
+		_start();
+		ackW = _byteSend(i << 1);
+		_stop();
+
 		if (ackR || ackW) {
 			callback(i, ackR, ackW);
 		}
@@ -257,43 +277,79 @@ void drv_i2c_detect(DrvI2cDetectCallback callback) {
 }
 
 
-_S8 drv_i2c_transfer(DrvI2cMessage *messages, _U8 messagesCount) {
-	_S8 ret = 0;
+_U8 drv_i2c_transfer(DrvI2cMessage *msgs, _U8 msgsCount) {
+	_U8 ret = msgsCount;
 
-	{
-		_U8 i;
-		_U8 j;
+	while (msgsCount > 0) {
+		_BOOL stop        = FALSE;
+		_BOOL lastMessage = FALSE;
+		_BOOL ack;
+		_U16 j;
 
-		for (i = 0; i < messagesCount; i++) {
-			DrvI2cMessage *currentMessage = messages + i;
+		if (msgsCount == 1) {
+			lastMessage = TRUE;
+		}
 
-			_BOOL stop  = FALSE;
+		// If all data sent, send STOP
+		if (lastMessage && (msgs->dataSize == 0)) {
+			stop = TRUE;
+		}
 
-			// Write address
-			{
-				_U8 address = currentMessage->slaveAddress << 1;
+		// Write address
+		{
+			_U8 address = msgs->slaveAddress << 1;
 
-				if (currentMessage->flags & DRV_I2C_MESSAGE_FLAG_READ) {
-					address |= 0x01;
-				}
-
-				ret = _putByte(address, TRUE, FALSE);
+			if (msgs->flags & DRV_I2C_MESSAGE_FLAG_READ) {
+				address |= 0x01;
 			}
 
-			for (j = 0; j < currentMessage->dataSize; j++) {
-				if (i == messagesCount - 1 && j == currentMessage->dataSize -1) {
-					stop = TRUE;
-				}
+			_start();
+			ack = _byteSend(address);
+			if (! ack) {
+				break;
+			}
 
-				if (currentMessage->flags & DRV_I2C_MESSAGE_FLAG_READ) {
-					currentMessage->data[j] = _getByte(stop);
-
-				} else {
-					ret = _putByte(currentMessage->data[j], FALSE, stop);
-				}
+			if (stop) {
+				_stop();
 			}
 		}
+
+		for (j = 0; j < msgs->dataSize; j++) {
+			_BOOL lastByte = FALSE;
+
+			if (j + 1 == msgs->dataSize) {
+				lastByte = TRUE;
+			}
+
+			// If all data sent, send STOP
+			if (lastMessage && lastByte) {
+				stop = TRUE;
+			}
+
+			if (msgs->flags & DRV_I2C_MESSAGE_FLAG_READ) {
+				msgs->data[j] = _byteRead(! stop);
+
+			} else {
+				ack = _byteSend(msgs->data[j]);
+				if (! ack) {
+					break;
+				}
+			}
+
+			if (stop) {
+				_stop();
+			}
+		}
+
+		if (! ack) {
+			break;
+		}
+
+		msgs++;
+		msgsCount--;
 	}
 
-	return 0;
+	ret -= msgsCount;
+
+	return ret;
 }

@@ -47,6 +47,6 @@ void drv_i2c_terminate(void);
 
 void drv_i2c_detect(DrvI2cDetectCallback callback);
 
-_S8 drv_i2c_transfer(DrvI2cMessage *messages, _U8 messagesCount);
+_U8 drv_i2c_transfer(DrvI2cMessage *messages, _U8 messagesCount);
 
 #endif /* DRV_I2C_H_ */
