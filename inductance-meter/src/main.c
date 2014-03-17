@@ -11,17 +11,15 @@
 
 // PB1 - OC1A - timer1 output
 // PC5 - ADC5 - comparator negative
-// PD7 - comparator positive
-
-// PD6 - AIN0 +
-// PD7 - AIN1 -
 
 // 942 nF
 
 // supported inductance range: 4,7uH - 50 mH
 
+#define USE_INTERNAL_COMPARATOR 0
+
 #define LOAD_PIO_BANK C
-#define LOAD_PIO_PIN  4
+#define LOAD_PIO_PIN  5
 
 #define SAMPLES_COUNT 8
 
@@ -41,7 +39,7 @@ ISR(TIMER1_CAPT_vect) {
 	samples[samplesCount++] = ICR1;
 }
 
-
+#if USE_INTERNAL_COMPARATOR
 ISR(ANALOG_COMP_vect) {
 	ACSR &= ~_BV(ACIE);
 
@@ -52,6 +50,7 @@ ISR(ANALOG_COMP_vect) {
 	// Start timer1
 	TCCR1B |= _BV(CS11);
 }
+#endif
 
 
 static void _loadPioSet(_BOOL high) {
@@ -75,7 +74,7 @@ void main(void) {
 		DBG(("START"));
 
 		sei();
-
+#if USE_INTERNAL_COMPARATOR
 		{
 			// Enable ADC (without this input multiplexer is not available)
 			PRR &= ~_BV(PRADC);
@@ -90,7 +89,7 @@ void main(void) {
 			ACSR |= _BV(ACIS0);
 			ACSR |= _BV(ACIS1);
 		}
-
+#endif
 
 		while (1) {
 			char c = debug_getc();
@@ -112,31 +111,39 @@ void main(void) {
 
 							samplesCount = 0;
 
+#if USE_INTERNAL_COMPARATOR
 							// Trigger on falling edge
 							TCCR1B &= ~_BV(ICES1);
+#else
+							// Trigger on rising edge
+							TCCR1B |= _BV(ICES1);
+#endif
 						}
-
+#if USE_INTERNAL_COMPARATOR
 						// Enable interrupt on Analog comparator
 						ACSR |= _BV(ACIE);
-
+#else
+						// Start timer1
+						TCCR1B |= _BV(CS11);
+#endif
 						//
 						_loadPioSet(FALSE);
 
 						_delay_ms(200);
-
+#if USE_INTERNAL_COMPARATOR
 						// Disable interrupt on Analog comparator
 						ACSR &= ~_BV(ACIE);
-
+#endif
 						// Stop timer
 						{
 							TIMSK1 &= ~_BV(ICIE1);
 							TCCR1B &= ~_BV(CS11);
 						}
-
+#if USE_INTERNAL_COMPARATOR
 						// Disable ICP
 						ACSR &= ~_BV(ACIC);
-
-						printf("Samples: %d %d %d %d %d\r\n", samplesCount, samples[0], samples[1], samples[2], samples[3]);
+#endif
+//						printf("Samples: %d %d %d %d %d\r\n", samplesCount, samples[0], samples[1], samples[2], samples[3]);
 
 						{
 							float frequency = 0;
@@ -145,7 +152,7 @@ void main(void) {
 							_U8 i;
 
 							if (samplesCount >= 2) {
-								frequency = (F_CPU / 8) / (float)(samples[1] - samples[0]);
+								frequency = (F_CPU / 8) / (float)(samples[2] - samples[1]);
 
 								inductance = 1000.0 / (float) (4.0 * M_PI * M_PI * frequency * frequency * 0.000000942); // w mH
 							}
