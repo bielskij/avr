@@ -130,7 +130,7 @@ static uint8_t _getAdcValue(uint8_t pin) {
 }
 
 
-void main() {
+int main(void) {
 	// Output direction for PWM OC0B. It is not
 	// automatically set when timer starts
 	DDRB |= _BV(PIN1);
@@ -213,5 +213,5 @@ void main() {
 		}
 	}
 
-	return;
+	return 0;
 }

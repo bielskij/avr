@@ -9,7 +9,7 @@
 #define DEBUG_H_
 
 
-void debug_initialize();
+void debug_initialize(void);
 
 void debug_sendByte(uint8_t data);
 

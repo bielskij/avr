@@ -173,14 +173,6 @@ static uint8_t _byteSend(uint8_t byte) {
 	return ack;
 }
 
-void debug_pio_high(uint8_t on) {
-	if (on) {
-		_sclHigh();
-
-	} else {
-		_sclLow();
-	}
-}
 
 void debug_sendByte(uint8_t b) {
 	_start();
